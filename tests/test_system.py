@@ -50,6 +50,22 @@ class SystemTests(unittest.TestCase):
         self.assertEqual(res.status_code,200)
         self.assertTrue(self.client.get('/api/report/demo').json()['demo'])
         self.assertEqual(self.client.post('/api/selections',headers=self.auth,json={'id':'demo-0','report_id':'demo'}).status_code,400)
+    def test_tracking_removal_preserves_article_identity(self):
+        from agent.pipeline import dedupe
+        items=[{'title':'China article one','description':'','url':'https://example.com/article?id=1&utm_source=test','source':'BBC'},
+               {'title':'China article two','description':'','url':'https://example.com/article?id=2&utm_source=test','source':'BBC'},
+               {'title':'China alternate title','description':'','url':'https://example.com/article?id=1&fbclid=test','source':'CNN'}]
+        result=asyncio.run(dedupe({'items':items,'stages':[]}))
+        self.assertEqual(len(result['items']),2)
+        self.assertEqual([i['url'] for i in result['items']],['https://example.com/article?id=1','https://example.com/article?id=2'])
+
+    def test_shared_job_lease(self):
+        from agent.store import acquire_lease,release_lease
+        first=acquire_lease();self.assertTrue(first)
+        self.assertIsNone(acquire_lease())
+        release_lease('wrong-token');self.assertIsNone(acquire_lease())
+        release_lease(first);self.assertTrue(acquire_lease())
+
     def test_source_failure_is_not_successful_report(self):
         async def failed(state):return {'items':[],'errors':[{'source':str(i),'error':'denied'} for i in range(8)],'stages':['采集原始内容']}
         with patch('agent.pipeline.collect',failed):res=self.client.post('/api/run',headers=self.auth)

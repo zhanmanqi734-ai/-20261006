@@ -2,7 +2,7 @@ import asyncio, hashlib, html, json, os, re
 from datetime import datetime, timezone
 import calendar, time
 from typing import TypedDict
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 import feedparser, httpx
 from langgraph.graph import StateGraph, START, END
 from agent.sources import SOURCES
@@ -41,15 +41,17 @@ async def collect(state):
     return {'items':items,'errors':errors,'stages':['采集原始内容']}
 
 async def dedupe(state):
-    seen=set();out=[]
+    seen=set();urls=set();out=[]
     for item in state['items']:
         text=item['title']+' '+item['description']
         if not re.search(r'\b(china|chinese)\b',text,re.I):continue
         if re.search(r'\b(sponsored|advertisement)\b',item['title'],re.I):continue
-        p=urlsplit(item['url']);item['url']=urlunsplit((p.scheme,p.netloc,p.path,'',''))
+        p=urlsplit(item['url'])
+        params=[(k,v) for k,v in parse_qsl(p.query,keep_blank_values=True) if not k.lower().startswith('utm_') and k.lower() not in ['utm','fbclid','gclid']]
+        item['url']=urlunsplit((p.scheme,p.netloc,p.path,urlencode(params),''))
         key=re.sub(r'\W+','',item['title'].lower())
-        if key in seen:continue
-        seen.add(key);item['id']=hashlib.sha256(item['url'].encode()).hexdigest()[:16];out.append(item)
+        if key in seen or item['url'] in urls:continue
+        seen.add(key);urls.add(item['url']);item['id']=hashlib.sha256(item['url'].encode()).hexdigest()[:16];out.append(item)
     return {'items':out,'stages':state['stages']+['过滤与去重']}
 
 STOPWORDS=set('china chinese the and for with from that this into says said over after amid about more news world have will its are has was new'.split())
